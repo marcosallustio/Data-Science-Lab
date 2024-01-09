@@ -1,0 +1,204 @@
+---
+title: "test_models"
+author: "Marco Sallustio"
+date: "2023-11-19"
+output: html_document
+---
+
+```{r}
+# Caricamento librerie
+library(dplyr)
+library(tidyverse)
+library(car)
+library(skedastic)
+library(olsrr)
+library(psych)
+library(systemfit)
+library(klaR)
+library(lmtest)
+library(systemfit)
+library(sandwich)
+library(DataCombine)
+library(describedata)
+library(pander)
+library(lubridate)
+library(xts)
+library(forecast)
+library(tis)
+library(imputeTS)
+library(MLmetrics)
+library(tidyverse)
+library(caret)
+library(MASS)
+library(caret)
+library(effects)
+```
+
+```{r}
+data <- read_csv("Ristoranti1.csv")
+```
+
+```{r}
+r0 = data[data$ristorante == 'R0',]
+r1 = data[data$ristorante == 'R1',]
+r2 = data[data$ristorante == 'R2',]
+r3 = data[data$ristorante == 'R3',]
+r4 = data[data$ristorante == 'R4',]
+r5 = data[data$ristorante == 'R5',]
+```
+
+```{r}
+post <- data[data$data>"2020-05-18",]
+pre <- data[data$data< "2020-03-08", ]
+```
+
+```{r}
+r0_pre = pre[pre$ristorante == 'R0',]
+r1_pre = pre[pre$ristorante == 'R1',]
+r2_pre = pre[pre$ristorante == 'R2',]
+r3_pre = pre[pre$ristorante == 'R3',]
+r4_pre = pre[pre$ristorante == 'R4',]
+r5_pre = pre[pre$ristorante == 'R5',]
+```
+
+```{r}
+r0_post = post[post$ristorante == 'R0',]
+r1_post = post[post$ristorante == 'R1',]
+r2_post = post[post$ristorante == 'R2',]
+r3_post = post[post$ristorante == 'R3',]
+r4_post = post[post$ristorante == 'R4',]
+r5_post = post[post$ristorante == 'R5',]
+```
+
+#### Welch Two Sample t-test (Post Pioggia)
+
+```{r}
+t_test_result_post <- t.test(r3_post$lordototale[r3_post$pioggia == 1], r3_post$lordototale[r3_post$pioggia == 0])
+print(t_test_result_post)
+```
+#### Welch Two Sample t-test (Post Temporale)
+
+```{r}
+t.test(r3_post$lordototale[r3_post$temporale == 1], r3_post$lordototale[r3_post$temporale == 0])
+```
+#### Welch Two Sample t-test (Post Neve)
+
+```{r}
+t.test(r3_post$lordototale[r3_post$neve == 1], r3_post$lordototale[r3_post$neve == 0])
+```
+#### Welch Two Sample t-test(Post Nebbia)
+
+```{r}
+t.test(r3_post$lordototale[r3_post$nebbia == 1], r3_post$lordototale[r3_post$nebbia == 0])
+```
+#### LM Post
+
+```{r}
+model_fen_post <- lm(lordototale ~ pioggia * nebbia * temporale * neve + HI , data = r3_post)
+summary(model_fen_post)
+```
+
+```{r}
+step(model_fen_post)
+```
+
+```{r}
+summary(glm(formula = lordototale ~ temporale + neve, data = r3_post))
+```
+
+```{r}
+data$giorno <- wday(data$data, week_start=1)
+data$weekend <- 0
+data$weekend[data$giorno==6 | data$giorno==7] <- 1
+data$weekend <- as.factor(data$weekend)
+```
+
+```{r}
+create_holiday <- function(date){
+  
+  holiday <- rep(0,length(date))
+  holiday[isEaster(date)] <- 1
+  holiday[which(isEaster(date))+1] <- 1
+  holiday[month(date)==12 & 
+            (day(date)==25 | day(date)==26)] <- 1
+  
+  holiday[month(date)==1 & 
+            (day(date)==1 | day(date)==6)] <- 1
+  
+  holiday[month(date)==8 & day(date)==15 ] <- 1
+  
+  holiday[]
+  
+  return(holiday)
+}
+```
+
+```{r}
+data$holiday <- create_holiday(data$data)
+```
+
+```{r}
+data$holiday[data$giorno == 7] <- 1
+```
+
+```{r}
+pre$giorno <- wday(pre$data, week_start=1)
+pre$weekend <- 0
+pre$weekend[pre$giorno==6 | pre$giorno==7] <- 1
+pre$weekend <- as.factor(pre$weekend)
+```
+
+```{r}
+post$giorno <- wday(post$data, week_start=1)
+post$weekend <- 0
+post$weekend[post$giorno==6 | post$giorno==7] <- 1
+post$weekend <- as.factor(post$weekend)
+```
+
+```{r}
+pre$holiday=create_holiday(pre$data)
+post$holiday=create_holiday(post$data)
+```
+
+```{r}
+pre$holiday[pre$giorno == 7] <- 1
+```
+
+```{r}
+post$holiday[post$giorno == 7] <- 1
+```
+
+```{r}
+r0_pre = pre[pre$ristorante == 'R0',]
+r1_pre = pre[pre$ristorante == 'R1',]
+r2_pre = pre[pre$ristorante == 'R2',]
+r3_pre = pre[pre$ristorante == 'R3',]
+r4_pre = pre[pre$ristorante == 'R4',]
+r5_pre = pre[pre$ristorante == 'R5',]
+```
+
+```{r}
+r0_post = post[post$ristorante == 'R0',]
+r1_post = post[post$ristorante == 'R1',]
+r2_post = post[post$ristorante == 'R2',]
+r3_post = post[post$ristorante == 'R3',]
+r4_post = post[post$ristorante == 'R4',]
+r5_post = post[post$ristorante == 'R5',]
+```
+
+#### LM Post Festivo/Non festivo
+
+```{r}
+model_fest_post<-lm(data = r3_post,formula=lordototale ~ holiday)
+summary(model_fest_post)
+```
+
+Risultati molto simili al pre con un intercetta uguale a 18909.7 e il coefficiente associato a **`holiday`** è -2774.7. Questo indica la variazione stimata in **`lordototale`** associata a un'unità di cambio in **`holiday`**. Poiché **`holiday`** è binaria, questo indica la differenza media tra i giorni festivi e i giorni non festivi.
+
+#### LM Post Giorni
+
+```{r}
+model_giorno_post<-lm(data = r3_post,formula=lordototale ~ as.factor(giorno))
+summary(model_giorno_post)
+```
+

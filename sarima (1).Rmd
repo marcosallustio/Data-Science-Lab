@@ -1,0 +1,492 @@
+---
+title: "Forecast"
+author: "Salvatore Rastelli"
+date: "2023-08-25"
+output: html_document
+---
+
+```{r}
+#import librerie, lettura dati
+library("forecast")
+library("lubridate")
+library("tseries")
+library("zoo")
+library("ggplot2")
+library("tsoutliers")
+library("car")
+library("dplyr")
+library("readr") 
+library("MLmetrics")
+library("imputeTS")
+library('gridExtra')
+library('tidyr')
+library('prophet')
+
+set.seed(1)
+```
+
+```{r}
+#Funzione per la pasqua
+is_easter <- function(year, month, day) {
+  a <- year %% 19
+  b <- year %/% 100
+  c <- year %% 100
+  d <- b %/% 4
+  e <- b %% 4
+  f <- (b + 8) %/% 25
+  g <- (b - f + 1) %/% 3
+  h <- (19 * a + b - d - g + 15) %% 30
+  i <- c %/% 4
+  k <- c %% 4
+  l <- (32 + 2 * e + 2 * i - h - k) %% 7
+  m <- (a + 11 * h + 22 * l) %/% 451
+  
+  month_easter <- (h + l - 7 * m + 114) %/% 31
+  day_easter <- ((h + l - 7 * m + 114) %% 31) + 1
+  
+  return(month == month_easter && day == day_easter)
+}
+```
+
+```{r}
+rist <- read_csv("C:/Users/sasir/Desktop/dslab/Ristoranti.csv")
+```
+
+```{r}
+# Funzione per identificare se un giorno è festivo
+is_holiday <- function(date) {
+  year <- year(date)
+  month <- month(date)
+  day <- day(date)
+  
+  easter <- is_easter(year, month, day)
+  easter_monday <- is_easter(year, month, day - 1)
+  ferragosto <- month == 8 && day == 15
+  natale <- month == 12 && day == 25
+  santo_stefano <- month == 12 && day == 26
+  capodanno <- month == 1 && day == 1
+  befana <- month == 1 && day == 6
+  
+  return(easter || easter_monday || ferragosto || natale || santo_stefano || capodanno || befana)
+}
+```
+
+## Aggiunta feste
+
+```{r}
+# Aggiungi la colonna "holiday" usando la funzione is_holiday
+rist$holiday <- sapply(rist$data, is_holiday)
+
+# Converti la colonna "holiday" in un formato numerico (0 o 1)
+rist$holiday <- as.numeric(rist$holiday)
+```
+
+# Divisione Pre/Post
+
+```{r}
+data_pre <- rist[rist$data<as.Date("2020-01-01"),]
+data_post <- rist[rist$data>as.Date("2020-06-02")
+                  ,]
+
+```
+
+#Previsioni
+
+```{r}
+
+r0 <- data_post[data_post$ristorante == "R3", ]
+
+#Finestra di previsione
+h=210
+
+
+# Suddivisione in train/test
+train <- r0[0:(nrow(r0)-h),]
+test <- r0[(nrow(r0)-h+1):nrow(r0),]
+
+
+y_train <- ts(train$lordototale,start = 1,frequency = 7)
+
+y_test <- ts(test$lordototale,start=124, frequency = 7)
+
+y_test[y_test==0] <- NA
+
+
+holiday_train <- sapply(train$data, is_holiday)
+holiday_train <- as.numeric(holiday_train)
+
+holiday_test <- sapply(test$data, is_holiday)
+holiday_test <- as.numeric(holiday_test)
+
+```
+
+#SARIMA
+
+```{r}
+fitseas <- auto.arima(y_train, 
+                  xreg=cbind(holiday_train), 
+                  seasonal=TRUE)
+
+fitseas
+```
+
+## Altre covariate
+
+```{r}
+# Matrice delle covariate utilizzate
+xreg <- cbind(r0$HI, 
+             r0$temporale,
+             r0$pioggia,
+             r0$neve,
+             r0$nebbia)
+```
+
+```{r}
+# Train set covariate
+xreg_train <- cbind(train$HI, 
+                   train$temporale,
+                   train$pioggia,
+                   train$neve,
+                   train$nebbia)
+
+# Modello SARIMA
+fitseascov <- Arima(y_train, order=c(0,0,5),seasonal=c(0,1,2), 
+                  xreg=xreg_train)
+
+fitseascov
+```
+
+```{r}
+# Test set covariate
+xreg_test <- cbind(test$HI, 
+                   test$temporale,
+                   test$pioggia,
+                   test$neve,
+                   test$nebbia)
+
+# Previsioni
+fcseascov <- forecast(fitseascov,
+                      xreg=xreg_test)
+
+plot(fcseascov, xlim=c(120,160))
+```
+
+```{r}
+# Risultati sul test set
+accuracy(fcseascov, y_test)
+```
+
+## Rolling Window
+
+```{r}
+
+# Funzione per ottenere le previsioni 
+
+arma_cv <- function(y, h, xreg) {
+  ncol <- ncol(xreg)
+  X <- matrix(xreg[seq_along(y), ], ncol = ncol)
+  if (nrow(xreg) < length(y) + h) {
+    stop("Variabili esplicative non sufficienti")
+  }
+  newX <- matrix(xreg[length(y) + seq(h), ], ncol = ncol)
+  fit <- Arima(y,
+               order=c(0,0,5),
+               seasonal=list(order=c(0,1,2),period=7),
+               xreg = X)
+  
+  
+  
+  forecast(fit, xreg = newX, h = h)
+}
+
+```
+
+### Previsioni 1 step-ahead
+
+```{r}
+# Giorni di previsione per ogni iterazione
+p <- 1
+
+# Numero di iterazioni
+k <- 210-p
+
+# Vettore di previsioni
+mape_1d <- 0
+rmse_1d <- 0
+
+y <- ts(r0$lordototale,frequency = 7)
+```
+
+
+```{r}
+for(i in 1:k){
+  val_pred <- arma_cv( y[ 1 : (length(y) - 211 + i) ], h=p , xreg = xreg[c(1:(nrow(xreg)- 211 + i + p)), ] )$mean
+  
+  mape_pred <- MAPE(val_pred , y_test[i])
+  rmse_pred <- RMSE(val_pred , y_test[i])
+    
+  
+  if (is.na(mape_pred) == FALSE) {
+    mape_1d <- mape_1d + mape_pred
+  }
+
+  if (is.na(rmse_pred) == FALSE) {
+    rmse_1d <- rmse_1d + rmse_pred
+  }
+  
+}
+```
+
+
+```{r}
+mape_1d <- (mape_1d/k)*100
+rmse_1d <- rmse_1d/k
+print(mape_1d)
+print(rmse_1d)
+```
+
+
+### Previsioni 7 step-ahead
+
+```{r}
+# Giorni di previsione per ogni iterazione
+p <- 7
+
+# Numero di iterazioni
+k <- 210-p
+
+# Vettore di previsioni
+mape_7d <- rep(0,7)
+rmse_7d <- rep(0,7)
+
+```
+
+
+```{r}
+for(i in 1:k){
+  val_pred <- arma_cv( y[ 1 : (length(y) - 211 + i) ], h=p , xreg = xreg[c(1:(nrow(xreg)- 211 + i + p)), ] )$mean
+  
+  
+  for (j in 1:7) {
+    mape_pred <- MAPE(val_pred[j] , y_test[i+j-1])
+    if (is.na(mape_pred) == FALSE) {
+      mape_7d[j] <- mape_7d[j]+ mape_pred
+    }
+    
+    rmse_pred <- RMSE(val_pred[j] , y_test[i+j-1])
+    if (is.na(rmse_pred) == FALSE) {
+      rmse_7d[j] <- rmse_7d[j]+ rmse_pred
+    }
+    
+  }
+
+}
+```
+
+
+```{r}
+mape_7d <- (mape_7d/k) * 100
+rmse_7d <- rmse_7d/k
+
+print(mape_7d)
+print(rmse_7d)
+```
+
+
+# Prophet
+
+```{r}
+################################### fb Prophet Ristorante 3 ###################################
+
+## Creazione e visualizzazione dataframe
+# sono necessarie due sole colonne: ds(date) e y(valori)
+ds <- r0$data
+y <- r0$lordototale
+df1 <- data.frame(ds, y)
+
+```
+
+```{r}
+## Valutazione modello
+
+r00 <- r0
+r00$ds <- r00$data
+r00$y <- r00$lordototale
+#r00 <- replace_na(r00)
+
+df1train <- r00[1:852, ]
+df1test <- r00[853:1062, ]
+
+# fitting modello su train set
+evaluation <- prophet(df1train, fit = FALSE )
+
+evaluation <- add_country_holidays(evaluation, country_name = "IT")
+
+evaluation <- fit.prophet(evaluation , df1train)
+forecast<- make_future_dataframe(evaluation, periods = 210, freq = 'D')
+
+
+forecast <- predict(evaluation, forecast)
+
+forecast <- forecast[853:1062, ]
+
+df1test[df1test$y == 0, ]<- NA
+
+# confronto tra previsti e valori reali (test set)
+accuracy(forecast$yhat, df1test$y)
+```
+
+
+
+# Rolling Window
+
+```{r}
+
+# Funzione per ottenere le previsioni 
+
+prop_cv <- function(df, h) {
+  
+  n = nrow(df)
+  #View(df)
+  
+  evaluation <- prophet(df, fit = FALSE )
+  evaluation <- add_country_holidays(evaluation, country_name = "IT")
+
+  evaluation <- fit.prophet(evaluation , df)
+  forecast<- make_future_dataframe(evaluation, periods = h, freq = 'D')
+  
+  
+  forecast <- predict(evaluation, forecast)
+  
+  forecast <- forecast[(n+1):(n+h), ]
+  return(forecast)
+  }
+```
+
+### Previsioni 1 step-ahead
+
+```{r}
+# Giorni di previsione per ogni iterazione
+p <- 1
+
+# Numero di iterazioni
+k <- 210-p
+
+# Vettore di previsioni
+mape_1d <- 0
+rmse_1d <- 0
+
+ds <- r0$data
+y <- r0$lordototale
+df1 <- data.frame(ds, y)
+```
+
+
+```{r, results='hide'}
+for(i in 1:k){
+  val_pred <- prop_cv( df1[ 1 : (nrow(df1) - 211 + i) , ], h=p )$yhat
+  
+  mape_pred <- MAPE(val_pred , y_test[i])
+  rmse_pred <- RMSE(val_pred , y_test[i])
+    
+  
+  if (is.na(mape_pred) == FALSE) {
+    mape_1d <- mape_1d + mape_pred
+  }
+
+  if (is.na(rmse_pred) == FALSE) {
+    rmse_1d <- rmse_1d + rmse_pred
+  }
+  
+}
+```
+
+
+
+```{r}
+mape_1d <- (mape_1d/k)*100
+rmse_1d <- rmse_1d/k
+print(mape_1d)
+print(rmse_1d)
+```
+
+### Previsioni 7-step ahead
+
+```{r}
+# Giorni di previsione per ogni iterazione
+p <- 7
+
+# Numero di iterazioni
+k <- 210-p
+
+# Vettore di previsioni
+mape_7d <- rep(0,7)
+rmse_7d <- rep(0,7)
+
+```
+
+```{r, echo=F}
+# Calcolo delle k previsioni di 7 giorni
+for(i in 1:k){
+  val_pred <- prop_cv( df1[ 1 : (nrow(df1) - 211 + i) , ], h=p )$yhat
+  
+  for (j in 1:7) {
+    mape_pred <- MAPE(val_pred[j] , y_test[i+j-1])
+    if (is.na(mape_pred) == FALSE) {
+      mape_7d[j] <- mape_7d[j]+ mape_pred
+    }
+    
+    rmse_pred <- RMSE(val_pred[j] , y_test[i+j-1])
+    if (is.na(rmse_pred) == FALSE) {
+      rmse_7d[j] <- rmse_7d[j]+ rmse_pred
+    }
+    
+  }
+
+}
+
+```
+
+
+```{r}
+mape_7d <- (mape_7d/203) * 100
+rmse_7d <- rmse_7d/203
+
+print(mape_7d)
+print(rmse_7d)
+```
+
+# Mixture models
+
+```{r}
+library(flexCWM)
+```
+
+```{r}
+
+r0$giorno <- wday(r0$data, week_start=1)
+data_post_train2 <- r0
+data_post_train2[is.na(data_post_train2)] <- 0
+
+cwm1 <- cwm(lordototale ~ HI + pioggia + neve + nebbia + temporale + holiday,
+              data=data_post_train2,
+              initialization="kmeans",
+              k=1:5)
+```
+
+```{r}
+summary(cwm1, criterion = "AICu", concomitant = TRUE)
+```
+
+```{r}
+data_post_train2$cluster <- getCluster(cwm1,criterion="AICu")
+```
+
+```{r}
+library(plotly)
+ 
+fig <- plot_ly(x = ~data_post_train2$giorno, y = ~data_post_train2$lordototale,
+               color=as.character(data_post_train2$cluster))
+
+fig
+```
